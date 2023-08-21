@@ -1,0 +1,257 @@
+library(ggplot2)
+library(tidyverse)
+library(sjPlot)
+library(labelled)
+library(gridExtra)
+require(reshape2)
+
+setwd("/Users/phowlett/Library/CloudStorage/Dropbox/PhD/Papers/Resp disease and ASM SR")
+
+# Set inputs
+
+# Mean cumulative RCS exposure (mg/m3-years)
+rcs_bar <- c(4,8,12,16)
+
+# Standard deviation is fixed at 0.5 mg/m/3
+rcs_sd <- 0.5
+
+# Background (non-miner) prevalence of TB (probability)
+p_tb <- 0.02
+
+# Odds ratio increase of silicosis per cumulative 1 mg/m3 RCS exposure
+s_risk <- 1.5
+s_risk_2 <- 2
+s_risk_3 <- 2.5
+
+# Odds ratio of TB amongst persons with silicosis, compared to no silicosis. Ehrlich et al BMC
+s_tb <- 4
+
+# Odds ratio increase risk of TB per 1 mg/m3 increased RCS. Hnizdo et al 1998
+rcs_tb <- 1.1
+
+# Background prevalence of HIV 
+hiv <- 0.02
+
+# Odds ratio of TB among persons with HIV and NO silicosis, compared to persons with without HIV
+# Corbett: risks increased from 0.7 + 3.6. However in this may be reduced by 67% in high ART setting: https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(10)70078-5/fulltext
+# Therefore approximate to twice the risk
+h_tb <- 2
+ 
+# Odds of TB among persons with HIV and silicosis;  the logistic regression model combines the risks of the predictor variables multiplicatively rather than additively
+# Thus there is no need for an interaction term
+
+
+
+# Create data frame 
+n <- 1000
+set.seed(123)
+
+id <- 1:n
+D <- data.frame(id)
+
+# Model rcs exposures
+# This likely underestimates higher exposures, when sd is likely to be greater, but lets just assume this 
+
+# Low RCS exposure
+
+for (i in 1:length(rcs_bar)) {
+  # calculate the value of mu for this iteration
+  mu <- sqrt(rcs_bar[i])
+  # simulate rcs values from a normal distribution with mean mu and sd rcs_sd
+  D[, paste0("rcs_", rcs_bar[i])] <- rnorm(n, mu, rcs_sd)^2
+}
+
+# create a data frame with the three rcs columns
+df <- data.frame(rcs_1 = D$rcs_4, rcs_2 = D$rcs_8, rcs_3 = D$rcs_12, rcs_4 = D$rcs_16)
+
+# convert the data frame to a long format
+df_long <- gather(df, key = "rcs", value = "value")
+
+df_long$rcs <- factor(df_long$rcs, levels = c("rcs_1", "rcs_2", "rcs_3", "rcs_4"),
+                      labels = c("Mean 4 mg/m^3-years", "Mean 8 mg/m^3-years",
+                                 "Mean 12 mg/m^3-years", "Mean 16 mg/m^3-years"))
+
+
+# create a ggplot object with the density plot
+fig_1 <- ggplot(df_long, aes(x = value, fill = rcs)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~rcs, ncol = 1) + 
+  theme_bw() + 
+  labs(title = "Smoothed Density Plot of RCS Values",
+       x = expression(RCS~mg/m^3~"-years"), y = "Density",
+       fill = "RCS") +
+  theme(plot.title = element_text(size = 12, face = "bold"),
+        axis.title = element_text(size = 12),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12), 
+        legend.position = "none" ) 
+fig_1
+ggsave("Density distribution examples.tiff", fig_1, width = 13, height = 20, units = "cm", dpi = 300)
+
+
+# Generate a baseline silicosis risk using a logistic regression model. Baseline risk/intercept is 2% in lowest category
+silicosis <- 0.02
+sil <- log(silicosis)
+sigma <- log(s_risk)
+
+# Low RCS exposure with low risk sigma (OR 1.5)
+D$psil_3 <- exp(sil + sigma * D$rcs_3) / (1 + exp(sil + sigma * D$rcs_3))
+D$sil_3 <- rbinom(n=length(D$id), size=1, prob=D$psil_3)
+table(D$sil_3)
+plot(D$psil_3, D$rcs_3)
+
+# Moderate RCS exposure with low risk sigma (OR 1.5)
+D$psil_6 <- exp(sil + sigma * D$rcs_6) / (1 + exp(sil + sigma * D$rcs_6))
+D$sil_6 <- rbinom(n=length(D$id), size=1, prob=D$psil_6)
+table(D$sil_6)
+
+# High RCS exposure with low risk sigma (OR 1.5)
+D$psil_9 <- exp(sil + sigma * D$rcs_9) / (1 + exp(sil + sigma * D$rcs_9))
+D$sil_9 <- rbinom(n=length(D$id), size=1, prob=D$psil_9)
+table(D$sil_9)
+
+# Moderate association (OR 2)
+sigma <- log(s_risk_2)
+
+# Low RCS exposure with low risk sigma (OR 2)
+D$psil_3_mod <- exp(sil + sigma * D$rcs_3) / (1 + exp(sil + sigma * D$rcs_3))
+D$sil_3_mod <- rbinom(n=length(D$id), size=1, prob=D$psil_3_mod)
+table(D$sil_3_mod)
+plot(D$rcs_3, D$psil_3_mod)
+
+# Moderate RCS exposure with low risk sigma (OR 2)
+D$psil_6_mod <- exp(sil + sigma * D$rcs_6) / (1 + exp(sil + sigma * D$rcs_6))
+D$sil_6_mod <- rbinom(n=length(D$id), size=1, prob=D$psil_6_mod)
+table(D$sil_6_mod)
+
+# High RCS exposure with low risk sigma (OR 2)
+D$psil_9_mod <- exp(sil + sigma * D$rcs_9) / (1 + exp(sil + sigma * D$rcs_9))
+D$sil_9_mod <- rbinom(n=length(D$id), size=1, prob=D$psil_9_mod)
+table(D$sil_9_mod)
+
+# Moderate association (OR 2.5)
+sigma <- log(s_risk_3)
+
+# Low RCS exposure with low risk sigma (OR 2)
+D$psil_3_high <- exp(sil + sigma * D$rcs_3) / (1 + exp(sil + sigma * D$rcs_3))
+D$sil_3_high <- rbinom(n=length(D$id), size=1, prob=D$psil_3_high)
+table(D$sil_3_high)
+plot(D$rcs_3, D$psil_3_high)
+
+# higherate RCS exposure with low risk sigma (OR 2)
+D$psil_6_high <- exp(sil + sigma * D$rcs_6) / (1 + exp(sil + sigma * D$rcs_6))
+D$sil_6_high <- rbinom(n=length(D$id), size=1, prob=D$psil_6_high)
+table(D$sil_6_high)
+
+# High RCS exposure with low risk sigma (OR 2)
+D$psil_9_high <- exp(sil + sigma * D$rcs_9) / (1 + exp(sil + sigma * D$rcs_9))
+D$sil_9_high <- rbinom(n=length(D$id), size=1, prob=D$psil_9_high)
+table(D$sil_9_high)
+
+# Plot of silicosis risk according to different ORs
+
+# convert the data frame to a long format
+head(D)
+
+df <- D %>%
+  gather(key = "sil_risk", value = "sil_val", c(psil_6, psil_6_mod,psil_6_high)) 
+
+table(df$sil_risk)
+df$sil_risk <- factor(df$sil_risk, levels = c("psil_6","psil_6_high","psil_6_mod"),
+                         labels = c("1.5", "2", "2.5"))
+
+
+ggplot(df, aes(x=rcs_6, y = sil_val)) + 
+  geom_line(aes(colour = sil_risk)) +
+  theme_bw() +
+  scale_colour_discrete(name="Odds ratio")+
+  xlab(expression("RCS mg/m"^3)) +
+  ylab("Probability of silicosis")
+
+# Randomy distribute 2% HIV cases among the population
+D$hiv <- rbinom(n=length(D$id), size=1, prob=hiv)
+table(D$hiv)
+
+
+# Create dummy variable if HIV and silicosis both present
+
+# Select columns of interest
+hiv_risk <- D %>% select(sil_3, sil_6, sil_9, 
+                         sil_3_mod, sil_6_mod, sil_9_mod, 
+                         sil_3_high, sil_6_high, sil_9_high)
+
+
+for (col in colnames(hiv_risk)) {
+  # cross over vector
+  hiv_sil <- which(D$hiv == 1 & D[[col]] == 1)
+  # Assign new column with 0 values to dataframe
+  D[, paste0("hiv_", col)] <- 0
+  D[hiv_sil, paste0("hiv_", col)] <- 1
+}
+table(D$hiv_sil_9_mod)
+
+
+# Generate a TB risk using a logistics regression model using baseline TB risk of cases per 1000 population per year and an odds ratio of 1.1 per
+beta_rcs <- log(rcs_tb) # rcs risk 
+gamma_sil <- log(s_tb) # silicosis risk 
+delta_hiv <- log(h_tb) # tb risk 
+int <-log((h_tb*s_tb)-(h_tb+s_tb)) # interaction risk - the additional risk to make a multiplicative relationship between silicosis and HIV
+# therefore it is the difference between multiplying ORs and then substracting addition, then log (as on log scale it is additive)
+b_line <- log(p_tb) # baseline TB risk in population
+
+# Model to generate TB risk
+
+# RCS 3 and low association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_3 + gamma_sil*D$sil_3 + delta_hiv*D$hiv)
+D$p3_tb_low <- D$mod/(1+D$mod)
+D$tb_3_low <- rbinom(n=length(D$id), size=1, prob=D$p3_tb_low)
+table(D$tb_3_low)
+
+# RCS 6 and low association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_6 + gamma_sil*D$sil_6 + delta_hiv*D$hiv + int*D$hiv_sil_6)
+D$p6_tb_low <- D$mod/(1+D$mod)
+D$tb_6_low <- rbinom(n=length(D$id), size=1, prob=D$p6_tb_low)
+table(D$tb_6_low)
+
+# RCS 9 and low association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_9 + gamma_sil*D$sil_9 + delta_hiv*D$hiv + int*D$hiv_sil_9)
+D$p9_tb_low <- D$mod/(1+D$mod)
+D$tb_9_low <- rbinom(n=length(D$id), size=1, prob=D$p9_tb_low)
+table(D$tb_9_low)
+
+# RCS 3 and moderate association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_3 + gamma_sil*D$sil_3_mod + delta_hiv*D$hiv + int*D$hiv_sil_3_mod)
+D$p3_tb_mod <- D$mod/(1+D$mod)
+D$tb_3_mod <- rbinom(n=length(D$id), size=1, prob=D$p3_tb_mod)
+table(D$tb_3_mod)
+
+# RCS 6 and moderate association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_6 + gamma_sil*D$sil_6_mod + delta_hiv*D$hiv + int*D$hiv_sil_6_mod)
+D$p6_tb_mod <- D$mod/(1+D$mod)
+D$tb_6_mod <- rbinom(n=length(D$id), size=1, prob=D$p6_tb_mod)
+table(D$tb_6_mod)
+
+# RCS 9 and moderate association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_9 + gamma_sil*D$sil_9_mod + delta_hiv*D$hiv + int*D$hiv_sil_9_mod)
+D$p9_tb_mod <- D$mod/(1+D$mod)
+D$tb_9_mod <- rbinom(n=length(D$id), size=1, prob=D$p9_tb_mod)
+table(D$tb_9_mod)
+
+# RCS 3 and high association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_3 + gamma_sil*D$sil_3_high + delta_hiv*D$hiv + int*D$hiv_sil_3_high)
+D$p3_tb_high <- D$mod/(1+D$mod)
+D$tb_3_high <- rbinom(n=length(D$id), size=1, prob=D$p3_tb_high)
+table(D$tb_3_high)
+
+# RCS 6 and high association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_6 + gamma_sil*D$sil_6_high + delta_hiv*D$hiv + int*D$hiv_sil_6_high)
+D$p6_tb_high <- D$mod/(1+D$mod)
+D$tb_6_high <- rbinom(n=length(D$id), size=1, prob=D$p6_tb_high)
+table(D$tb_6_high)
+
+# RCS 9 and high association risk
+D$mod <- exp(b_line + beta_rcs*D$rcs_9 + gamma_sil*D$sil_9_high + delta_hiv*D$hiv + int*D$hiv_sil_9_high)
+D$p9_tb_high <- D$mod/(1+D$mod)
+D$tb_9_high <- rbinom(n=length(D$id), size=1, prob=D$p9_tb_high)
+table(D$tb_9_high)
+
