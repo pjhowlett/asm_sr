@@ -1,0 +1,314 @@
+#
+# This is a Shiny web application. You can run the application by clicking
+# the 'Run App' button above.
+#
+# Find out more about building applications with Shiny here:
+#
+#    http://shiny.rstudio.com/
+#
+
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(tidyverse)
+library(sjPlot)
+library("shinythemes")
+library(labelled)
+library(gridExtra)
+
+# Define UI for application that draws a histogram
+ui <- fluidPage(theme = shinytheme("cosmo"),
+                
+                # Application title
+                titlePanel("Model of silicosis prevalence and TB incidence at increasing mean RCS exposures"),
+
+    # Sidebar with a slider input for number of bins 
+    sidebarLayout(
+      sidebarPanel(
+        sliderInput("p_tb",
+                    "Background (non-miner) incidence of TB (cases per 100,000-year)",
+                    min = 0,
+                    max = 1000,
+                    step = 50,
+                    value = 200),
+        sliderInput("s_risk",
+                    "Odds ratio increase of silicosis per cumulative 1 mg/m3 RCS exposure#",
+                    min = 1,
+                    max = 3,
+                    step = 0.1,
+                    value = 1.3),
+        sliderInput("stb_risk",
+                    "Odds ratio increase in yearly TB risk per 1mg/m3 cumulative RCS exposure",
+                    min = 1,
+                    max = 1.3,
+                    step = 0.01,
+                    value = 1.05),
+        sliderInput("s_tb",
+                    "Odds ratio of TB amongst persons with silicosis",
+                    min = 1,
+                    max = 8,
+                    step = 0.5,
+                    value = 4),
+        sliderInput("hiv",
+                    "Baseline HIV prevalence (%)",
+                    min = 0,
+                    max = 20,
+                    step = 0.5,
+                    value = 2),
+        sliderInput("h_tb",
+                    "Odds ratio of TB in HIV positive vs HIV negative person",
+                    min = 0,
+                    max = 8,
+                    step = 1,
+                    value = 2),
+        
+        ),
+
+        # Show a plot of the generated distribution
+        mainPanel(
+           plotlyOutput("plot1", height = "375px"),
+           plotlyOutput("plot2", height = "375px"), 
+           tableOutput("my_table")
+        )
+), 
+"*NB. RCS exposures have been transformed to ensure a negative skew which is more pronounced at lower values"
+)
+
+
+# Define server logic required to draw a histogram
+server <- function(input, output) {
+
+      set.seed(123)
+  
+  output$plot1 = renderPlotly({
+      
+      stb_model <- function(rcs_bar = 4, rcs_sd = 0.5, p_tb = 200, s_risk = 1.3,
+                            stb_risk = 1.05, s_tb = 4, hiv = 0.02, h_tb = 4) {
+        
+        n <- 10000
+        set.seed(123)
+        id <- 1:n
+        D <- data.frame(id)
+        
+        # Generate RCS with mean value rcs_bar and sd rcs_sd transformed using quadratic function
+        mu <- sqrt(rcs_bar)
+        D$rcs <- rnorm(n,mu,rcs_sd)^2
+        
+        # Generate a baseline silicosis risk using a logistic regression model, using a baseline risk of 0 and an odds ratio of 1.2 per 
+        silicosis <- 2
+        sil <- log(silicosis/100)
+        sigma <- log(s_risk)
+        D$pi_z <- exp(sil + sigma * D$rcs) / (1 + exp(sil + sigma * D$rcs))
+        D$silicosis <- rbinom(n=length(D$id), size=1, prob=D$pi_z)
+        table(D$silicosis)
+        sil_c <- (sum(D$silicosis == 1)/n)*100
+        
+        # Randomly distribute HIV prevalence in the population 
+        D$hiv <- rbinom(n=length(D$id), size=1, prob=hiv)
+        
+        # Generate a TB risk using a logistics regression model using baseline TB risk of cases per 1000 population per year 
+        beta_rcs <- log(stb_risk) # rcs risk on TB 
+        gamma_sil <- log(s_tb) # silicosis risk on TB  
+        delta_hiv <- log(h_tb) # HIV risk on TB
+        b_line <- log(p_tb/100000) # baseline TB risk in population
+        
+        # Model to generate TB risk
+        
+        # RCS 3 and low association risk
+        D$mod <- exp(b_line + beta_rcs*D$rcs + gamma_sil*D$silicosis + delta_hiv*D$hiv)
+        D$tb <- rpois(n=length(D$id), lambda=D$mod)
+        tb_c <- sum(D$tb == 1)*10
+        
+        return(c(sil_c, tb_c))
+        
+      }
+      
+      
+      # Empty dataframe
+      
+      D2 <- data.frame(rcs_mu = numeric(),
+                       sil_cases = numeric(),
+                       tb_cases = numeric())
+      
+      # Run loop of RCS 
+      rcs_values <- seq(0.1, 20, by = 0.1)
+      
+      # Loop through the values of RCS from 1 to 10
+      for (rcs in rcs_values) {
+
+        # Call the function to calculate the risks
+        risks <- stb_model(rcs_bar = rcs, rcs_sd = 0.5, p_tb = input$p_tb, s_risk = input$s_risk,
+                               stb_risk = input$stb_risk, s_tb = input$s_tb, hiv = input$hiv/100, h_tb = input$h_tb)
+        
+        # Add the values to the data frame
+        D2 <- rbind(D2, data.frame(rcs_mu = rcs, sil_cases = risks[1], tb_cases = risks[2]))
+      }
+      
+      # Model 
+      
+      D2$RCS <- round(D2$rcs_mu, 2)
+      D2$Silicosis <- round(D2$sil_cases, 2)
+      
+      p1 <- ggplot(D2, aes(x=RCS, y = Silicosis)) + 
+        geom_smooth(method = 'loess', se = FALSE, size = 0.8, colour = "blue") +
+        theme_bw() +
+        labs(x = "Mean RCS mg/m3-years", y = "Silicosis prevalence")
+      
+    
+      p1 <- ggplotly(p1)
+
+      p1})
+  
+      output$plot2 = renderPlotly({
+        stb_model <- function(rcs_bar = 4, rcs_sd = 0.5, p_tb = 200, s_risk = 1.3,
+                              stb_risk = 1.05, s_tb = 4, hiv = 0.02, h_tb = 4) {
+          
+          n <- 10000
+          set.seed(123)
+          id <- 1:n
+          D <- data.frame(id)
+          
+          # Generate RCS with mean value rcs_bar and sd rcs_sd transformed using quadratic function
+          mu <- sqrt(rcs_bar)
+          D$rcs <- rnorm(n,mu,rcs_sd)^2
+          
+          # Generate a baseline silicosis risk using a logistic regression model, using a baseline risk of 0 and an odds ratio of 1.2 per 
+          silicosis <- 2
+          sil <- log(silicosis/100)
+          sigma <- log(s_risk)
+          D$pi_z <- exp(sil + sigma * D$rcs) / (1 + exp(sil + sigma * D$rcs))
+          D$silicosis <- rbinom(n=length(D$id), size=1, prob=D$pi_z)
+          table(D$silicosis)
+          sil_c <- (sum(D$silicosis == 1)/n)*100
+          
+          # Randomly distribute HIV prevalence in the population 
+          D$hiv <- rbinom(n=length(D$id), size=1, prob=hiv)
+          
+          # Generate a TB risk using a logistics regression model using baseline TB risk of cases per 1000 population per year 
+          beta_rcs <- log(stb_risk) # rcs risk on TB 
+          gamma_sil <- log(s_tb) # silicosis risk on TB  
+          delta_hiv <- log(h_tb) # HIV risk on TB
+          b_line <- log(p_tb/100000) # baseline TB risk in population
+          
+          # Model to generate TB risk
+          
+          # RCS 3 and low association risk
+          D$mod <- exp(b_line + beta_rcs*D$rcs + gamma_sil*D$silicosis + delta_hiv*D$hiv)
+          D$tb <- rpois(n=length(D$id), lambda=D$mod)
+          tb_c <- sum(D$tb == 1)*10
+          
+          return(c(sil_c, tb_c))
+          
+        }
+        
+        
+        # Empty dataframe
+        
+        D2 <- data.frame(rcs_mu = numeric(),
+                         sil_cases = numeric(),
+                         tb_cases = numeric())
+        
+        # Run loop of RCS 
+        rcs_values <- seq(0.1, 20, by = 0.1)
+        
+        # Loop through the values of RCS from 1 to 10
+        for (rcs in rcs_values) {
+          
+          # Call the function to calculate the risks
+          risks <- stb_model(rcs_bar = rcs, rcs_sd = 0.5, p_tb = input$p_tb, s_risk = input$s_risk,
+                             stb_risk = input$stb_risk, s_tb = input$s_tb, hiv = input$hiv/100, h_tb = input$h_tb)
+          
+          # Add the values to the data frame
+          D2 <- rbind(D2, data.frame(rcs_mu = rcs, sil_cases = risks[1], tb_cases = risks[2]))
+        }
+        
+        D2$RCS <- round(D2$rcs_mu, 2)
+        D2$TB <- round(D2$tb_cases, 2)
+        
+        p2 <- ggplot(D2, aes(x = RCS, y = TB)) +
+          geom_smooth(method = 'loess', se = FALSE, size = 0.8, color = "orange") +
+          theme_bw() +
+          labs(x = "Mean RCS mg/m3-years", y = "Annual TB incidence per 100,000")
+        
+        p2 <- ggplotly(p2) 
+        
+        
+        p2})
+      
+      output$my_table <- renderTable({
+        stb_model <- function(rcs_bar = 4, rcs_sd = 0.5, p_tb = 200, s_risk = 1.3,
+                              stb_risk = 1.05, s_tb = 4, hiv = 0.02, h_tb = 4) {
+          
+          n <- 10000
+          set.seed(123)
+          id <- 1:n
+          D <- data.frame(id)
+          
+          # Generate RCS with mean value rcs_bar and sd rcs_sd transformed using quadratic function
+          mu <- sqrt(rcs_bar)
+          D$rcs <- rnorm(n,mu,rcs_sd)^2
+          
+          # Generate a baseline silicosis risk using a logistic regression model, using a baseline risk of 0 and an odds ratio of 1.2 per 
+          silicosis <- 2
+          sil <- log(silicosis/100)
+          sigma <- log(s_risk)
+          D$pi_z <- exp(sil + sigma * D$rcs) / (1 + exp(sil + sigma * D$rcs))
+          D$silicosis <- rbinom(n=length(D$id), size=1, prob=D$pi_z)
+          table(D$silicosis)
+          sil_c <- (sum(D$silicosis == 1)/n)*100
+          
+          # Randomly distribute HIV prevalence in the population 
+          D$hiv <- rbinom(n=length(D$id), size=1, prob=hiv)
+          
+          # Generate a TB risk using a logistics regression model using baseline TB risk of cases per 1000 population per year 
+          beta_rcs <- log(stb_risk) # rcs risk on TB 
+          gamma_sil <- log(s_tb) # silicosis risk on TB  
+          delta_hiv <- log(h_tb) # HIV risk on TB
+          b_line <- log(p_tb/100000) # baseline TB risk in population
+          
+          # Model to generate TB risk
+          
+          # RCS 3 and low association risk
+          D$mod <- exp(b_line + beta_rcs*D$rcs + gamma_sil*D$silicosis + delta_hiv*D$hiv)
+          D$tb <- rpois(n=length(D$id), lambda=D$mod)
+          tb_c <- sum(D$tb == 1)*10
+          
+          return(c(sil_c, tb_c))
+          
+        }
+        
+        # Create a table of silicosis prevalence and TB incidence at RCS 3, 6, 9, 12, 15 for OR 1.2, 1.2, 1.3
+        D4 <- data.frame(rcs_bar = numeric(),
+                         sil_cases = numeric(),
+                         tb_cases = numeric())
+        
+        # Run loop of RCS 
+        rcs_values_2 <- c(4,8,12,16,20)
+        
+        # Loop through the values of RCS from 1 to 10
+        for (rcs in rcs_values_2) {
+          # Call the function to calculate the risks
+          risks <- stb_model(rcs_bar = rcs, rcs_sd = 0.5, p_tb = input$p_tb, s_risk = input$s_risk,
+                             stb_risk = input$stb_risk, s_tb = input$s_tb, hiv = input$hiv/100, h_tb = input$h_tb)
+          # Add the values to the data frame
+          D4 <- rbind(D4, data.frame(rcs_bar = rcs, sil_cases = risks[1], tb_cases = risks[2]))
+        }
+
+        # Convert from wide to long format
+        D4_long <- pivot_longer(D4, cols = -rcs_bar, names_to = "Variable", values_to = "Value")
+        D4_long$Value <- as.integer(D4_long$Value)
+      
+        # Convert Variable column to Silicosis prevalence and TB incidence
+        D4_long$Variable <- ifelse(D4_long$Variable == "sil_cases", "Silicosis prevalence (%)", "TB incidence per 100,000")
+        
+        # Convert from long to wide format
+        D4_wide <- pivot_wider(D4_long, names_from = rcs_bar, values_from = Value)
+        
+        # Rename the first column to "Mean RCS (mg/m3-year)"
+        colnames(D4_wide)[1] <- "Mean RCS (mg/m3-year)"
+        
+        D4_wide}, table.attr = 'style="font-size:20px;"')
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
